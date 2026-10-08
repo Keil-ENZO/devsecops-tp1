@@ -33,6 +33,17 @@ Client ──:5000──> [ api-python ]   Chainguard Python, UID 65532, sans sh
 |---|---|
 | API Flask | https://github.com/Keil-ENZO/devsecops-tp1/pkgs/container/devsecops-tp1-api |
 
+Tags publiés par la release `v1.0.0`, tous sur le même digest :
+
+| Tag | Digest |
+|---|---|
+| `1.0.0` | `sha256:a779745c8ea8ce40fecd6fc019a362bd4d141fadb7e679b429b53ef504a33418` |
+| `1.0` | idem |
+| `1` | idem |
+
+Image construite pour `linux/amd64`.
+Sur Mac Apple Silicon, Docker l'exécute via émulation.
+
 La base de données utilise l'image Chainguard publique, épinglée par digest.
 Elle n'est pas reconstruite, donc pas republiée.
 
@@ -508,7 +519,8 @@ No known vulnerabilities found
 
 ```
 $ docker run --rm --entrypoint sh ghcr.io/keil-enzo/devsecops-tp1-api:1.0.0 -c id
-docker: Error response from daemon: ... exec: "sh": executable file not found in $PATH
+docker: Error response from daemon: failed to create task for container: [...]
+exec: "sh": executable file not found in $PATH
 
 $ docker inspect -f '{{.Config.User}}' ghcr.io/keil-enzo/devsecops-tp1-api:1.0.0
 65532
@@ -541,8 +553,70 @@ test_app.py::test_dbtest PASSED                                          [100%]
 
 ### Pipeline GitHub Actions
 
-> À compléter après le run sur `main` : lien du run et capture des jobs verts.
+| Déclencheur | Run | Résultat |
+|---|---|---|
+| Pull request #1 | [37779582120](https://github.com/Keil-ENZO/devsecops-tp1/actions/runs/37779582120) | ✅ success |
+| Push sur `main` | [37779993568](https://github.com/Keil-ENZO/devsecops-tp1/actions/runs/37779993568) | ✅ success, release ignorée car sans tag |
+| Tag `v1.0.0` | [37783928241](https://github.com/Keil-ENZO/devsecops-tp1/actions/runs/37783928241) | ✅ success |
+
+Détail du run `v1.0.0` :
+
+```
+Lint Python (Flake8): success
+Lint Dockerfile (Hadolint): success
+Build & métrologie des couches (Dive): success
+Vulnérabilités (Trivy): success
+Tests d'intégration (Compose): success
+Publication GHCR: success
+```
 
 ### Publication GHCR confirmée
 
-> À compléter après le tag `v1.0.0` : lien du run `release` et sortie de `docker pull`.
+Extrait du job `Publication GHCR` :
+
+```
+The push refers to repository [ghcr.io/keil-enzo/devsecops-tp1-api]
+ad34bb2d9fea: Pushed
+94d60d793334: Pushed
+[...]
+cf2c94266c56: Pushed
+```
+
+Pull anonyme, sans authentification :
+
+```
+$ docker logout ghcr.io
+Removing login credentials for ghcr.io
+
+$ docker pull ghcr.io/keil-enzo/devsecops-tp1-api:1.0.0
+1.0.0: Pulling from keil-enzo/devsecops-tp1-api
+6d4bd3a74295: Pull complete
+[...]
+8de010ef9caf: Pull complete
+Digest: sha256:a779745c8ea8ce40fecd6fc019a362bd4d141fadb7e679b429b53ef504a33418
+Status: Downloaded newer image for ghcr.io/keil-enzo/devsecops-tp1-api:1.0.0
+```
+
+Labels OCI de l'image publiée :
+
+```
+org.opencontainers.image.source   = https://github.com/Keil-ENZO/devsecops-tp1
+org.opencontainers.image.revision = 009e7e85cd04e1d503ed10932752cb87811aa195
+org.opencontainers.image.version  = v1.0.0
+org.opencontainers.image.created  = 2026-10-08T13:23:41.948Z
+```
+
+Image publiée testée dans la stack Compose :
+
+```
+$ API_TAG=1.0.0 docker compose up -d --no-build --wait --wait-timeout 120
+$ docker compose ps
+SERVICE      IMAGE                                       STATUS
+api-python   ghcr.io/keil-enzo/devsecops-tp1-api:1.0.0   Up 5 seconds (healthy)
+db           cgr.dev/chainguard/postgres:latest@sha256:0c4eaf6c…   Up 11 seconds (healthy)
+
+$ curl -s http://localhost:5000/health
+{"status":"ok"}
+$ curl -s http://localhost:5000/dbtest
+{"db_connection":"successful"}
+```
