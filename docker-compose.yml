@@ -1,6 +1,7 @@
 services:
   api-python:
     build: .
+    image: ghcr.io/keil-enzo/devsecops-tp1-api:${API_TAG:-local}
     ports:
       - "5000:5000"
     environment:
@@ -10,26 +11,46 @@ services:
       - DB_NAME=testdb
       - DB_HOST=db
       - DB_PORT=5432
+    networks:
+      - frontend
+      - backend
     depends_on:
       db:
         condition: service_healthy
-  
+    healthcheck:
+      test:
+        - CMD
+        - /usr/bin/python3
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3).status == 200 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   db:
-    image: postgres:14-alpine
+    image: cgr.dev/chainguard/postgres:latest@sha256:0c4eaf6cb9bd65337d834f5ebfe79add4312ee2125ab584bf1fbc071abc6bb8f
+    user: "70:70"
     environment:
       POSTGRES_USER: testuser
       POSTGRES_PASSWORD: testpass
       POSTGRES_DB: testdb
-    ports:
-      - "5432:5432"
+      PGDATA: /var/lib/postgresql/data
     volumes:
-      - db-data-test:/var/lib/postgresql/data
+      - db-data-test:/var/lib/postgresql
+    networks:
+      - backend
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U testuser -d testdb"]
+      test: ["CMD", "pg_isready", "-U", "testuser", "-d", "testdb"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
+
+networks:
+  frontend:
+  backend:
+    internal: true
 
 volumes:
   db-data-test:

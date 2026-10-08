@@ -1,0 +1,16 @@
+# Secrets locaux (le modèle .env.example reste versionné)
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Divers
+*.log
+*.tar
+.DS_Store
