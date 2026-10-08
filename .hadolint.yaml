@@ -1,0 +1,15 @@
+# Gouvernance de conteneurisation de l'équipe
+failure-threshold: warning
+
+trustedRegistries:
+  - docker.io
+  - gcr.io
+  - cgr.dev
+  - ghcr.io
+
+override:
+  error:
+    - DL3002 # le dernier USER ne doit pas être root
+    - DL3006 # tag explicite obligatoire sur FROM
+    - DL3007 # tag :latest interdit (sauf épinglage par digest)
+    - DL4006 # set -o pipefail obligatoire avant un pipe

@@ -1,0 +1,47 @@
+# Métadonnées Git / CI
+.git
+.gitignore
+.github
+
+# Environnements et secrets locaux
+.env
+.env.*
+*.env
+.venv
+venv
+
+# Caches Python et de tests
+__pycache__
+*.py[cod]
+.pytest_cache
+.coverage
+htmlcov
+.mypy_cache
+
+# Tests
+test_*.py
+*_test.py
+tests
+pytest.ini
+
+# Logs, archives, notes
+*.log
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+notes
+
+# Docs et config hors image
+*.md
+LICENSE
+docker-compose*.yml
+Dockerfile
+.dockerignore
+.hadolint.yaml
+.flake8
+
+# IDE / OS
+.vscode
+.idea
+.DS_Store

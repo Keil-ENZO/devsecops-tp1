@@ -2,11 +2,6 @@
 __pycache__
 *.pyc
 .pytest_cache
-test_*.py
-tests/
 .env*
 venv/.venv
 *.log
-*.tar*
-*.zip
-README.md
