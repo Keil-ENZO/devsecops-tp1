@@ -16,6 +16,9 @@ concurrency:
 
 env:
   IMAGE_NAME: ghcr.io/keil-enzo/devsecops-tp1-api
+  DB_IMAGE_NAME: ghcr.io/keil-enzo/devsecops-tp1-db
+  # Même digest que docker-compose.yml : l'image scannée est celle publiée.
+  DB_IMAGE_SRC: cgr.dev/chainguard/postgres:latest@sha256:0c4eaf6cb9bd65337d834f5ebfe79add4312ee2125ab584bf1fbc071abc6bb8f
   CI_TAG: ci-${{ github.sha }}
   PYTHON_VERSION: "3.14"
 
@@ -50,7 +53,7 @@ jobs:
           config: .hadolint.yaml
 
   build:
-    name: Build image
+    name: Build & métrologie des couches (Dive)
     needs: [lint-python, lint-docker]
     runs-on: ubuntu-24.04
     permissions:
@@ -74,22 +77,6 @@ jobs:
           outputs: type=docker,dest=${{ runner.temp }}/image.tar
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: image
-          path: ${{ runner.temp }}/image.tar
-          retention-days: 1
-
-  dive:
-    name: Efficience (Dive)
-    needs: build
-    runs-on: ubuntu-24.04
-    permissions: {}
-    steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: image
-          path: ${{ runner.temp }}
       - name: Dive --ci (efficience >= 80 %)
         run: |
           docker run --rm -e CI=true \
@@ -98,6 +85,11 @@ jobs:
             docker-archive:///image.tar \
             --lowestEfficiency=0.8 \
             --highestUserWastedPercent=0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image
+          path: ${{ runner.temp }}/image.tar
+          retention-days: 1
 
   trivy:
     name: Vulnérabilités (Trivy)
@@ -124,7 +116,7 @@ jobs:
       - name: Trivy image DB
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: cgr.dev/chainguard/postgres:latest@sha256:0c4eaf6cb9bd65337d834f5ebfe79add4312ee2125ab584bf1fbc071abc6bb8f
+          image-ref: ${{ env.DB_IMAGE_SRC }}
           scanners: vuln
           severity: HIGH,CRITICAL
           ignore-unfixed: true
@@ -185,7 +177,7 @@ jobs:
 
   release:
     name: Publication GHCR
-    needs: [dive, trivy, integration]
+    needs: [trivy, integration]
     if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     permissions:
@@ -200,7 +192,9 @@ jobs:
       - id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ${{ env.IMAGE_NAME }}
+          images: |
+            ${{ env.IMAGE_NAME }}
+            ${{ env.DB_IMAGE_NAME }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -214,12 +208,30 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # On publie exactement l'image scannée et testée, sans rebuild.
-      - name: Tag et push
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # API : on publie exactement l'archive scannée et testée, sans rebuild.
+      - name: Push image API
         env:
           TAGS: ${{ steps.meta.outputs.tags }}
         run: |
           for tag in $TAGS; do
-            docker tag "$IMAGE_NAME:$CI_TAG" "$tag"
-            docker push "$tag"
+            case "$tag" in "$IMAGE_NAME":*)
+              docker tag "$IMAGE_NAME:$CI_TAG" "$tag"
+              docker push "$tag"
+            esac
           done
+      # DB : copie registre à registre du digest Chainguard scanné (toutes architectures).
+      # L'annotation source relie le package GHCR au dépôt.
+      - name: Push image DB
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          args=()
+          for tag in $TAGS; do
+            case "$tag" in "$DB_IMAGE_NAME":*) args+=(-t "$tag") ;; esac
+          done
+          docker buildx imagetools create "${args[@]}" \
+            --annotation "index:org.opencontainers.image.source=$SOURCE_URL" \
+            --annotation "index:org.opencontainers.image.description=Chainguard PostgreSQL durci, epingle par digest" \
+            "$DB_IMAGE_SRC"
