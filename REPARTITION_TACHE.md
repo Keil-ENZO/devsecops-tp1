@@ -13,6 +13,47 @@ Point de contrat entre A et B (à fixer en 10 min au début) :
 - chemin du venv dans l'image (`/app/.venv` ou `/opt/venv`) → nécessaire pour le healthcheck de B
 - digest Chainguard Postgres (B), digest image Python (A)
 
+### Contrat figé (vérifié le 2026-10-08)
+
+| Point | Valeur retenue |
+|---|---|
+| Image API | `ghcr.io/keil-enzo/devsecops-tp1-api` (owner en minuscules) |
+| Image DB | pas de rebuild, image Chainguard utilisée telle quelle dans la compose |
+| Port API | `5000`, bind `0.0.0.0` dans le conteneur |
+| UID API | `65532:65532` (`nonroot` distroless) |
+| UID DB | `70` (`postgres`), l'entrypoint démarre root puis bascule via `setpriv` |
+| Venv | `/opt/venv` |
+| Python runtime | `/usr/bin/python3` → 3.11.2 (distroless) |
+| Commande API | `ENTRYPOINT ["/opt/venv/bin/python3", "app.py"]`, `WORKDIR /app` |
+| Healthcheck API (B) | `["CMD", "/usr/bin/python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3).status == 200 else 1)"]` |
+| Healthcheck DB (B) | `["CMD", "pg_isready", "-U", "testuser", "-d", "testdb"]` |
+
+Digests (index multi-arch, à recopier tels quels) :
+
+```
+# A : builder
+debian:12-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
+# A : runtime
+gcr.io/distroless/python3-debian12:nonroot@sha256:7d1042ce588ab97019fe95c24ffca7bc5a82ccdac572511d5e09bda4435c89c5
+# B : base de données
+cgr.dev/chainguard/postgres:latest@sha256:0c4eaf6cb9bd65337d834f5ebfe79add4312ee2125ab584bf1fbc071abc6bb8f
+```
+
+Points vérifiés et décisions :
+- **Builder = `debian:12-slim` + `apt python3-venv`, pas `python:3.11-slim`.**
+  `python:3.11-slim` installe Python dans `/usr/local/bin` (3.11.17).
+  Distroless l'a dans `/usr/bin` (3.11.2).
+  Le venv contient des symlinks vers l'interpréteur : ils casseraient au runtime.
+  Testé : venv `/opt/venv` construit sur debian:12-slim, copié dans distroless, Flask s'importe.
+- **Healthcheck API indépendant du venv** : il n'utilise que `urllib` (stdlib).
+  `/usr/bin/python3` suffit. A peut changer le venv sans casser B.
+- **Chainguard Postgres** : `pg_isready` présent, PostgreSQL **18.6**, `PGDATA=/var/lib/postgresql/data`.
+  Variables `POSTGRES_USER/PASSWORD/DB` reconnues. Trivy : **0 CVE**.
+  Taille 380 Mo, plus lourd que `14-alpine` (285 Mo) : à justifier dans le README.
+  L'image contient `sh` et `bash` (entrypoint shell) : ne pas annoncer "sans shell" pour la DB.
+- **Passage PG 14 → 18** : volume incompatible, faire `docker compose down -v` avant le premier test.
+- Chainguard gratuit = tag `latest` uniquement → épinglage par digest obligatoire.
+
 ---
 
 ### Personne A
