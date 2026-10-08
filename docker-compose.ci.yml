@@ -1,0 +1,12 @@
+# Surcharge CI uniquement : expose la DB sur la loopback du runner
+# pour que pytest (test d'intégration /dbtest) puisse s'y connecter.
+services:
+  db:
+    ports:
+      - "127.0.0.1:5432:5432"
+    networks:
+      - backend
+      - ci
+
+networks:
+  ci:
