@@ -20,11 +20,11 @@ Point de contrat entre A et B (à fixer en 10 min au début) :
 | Image API | `ghcr.io/keil-enzo/devsecops-tp1-api` (owner en minuscules) |
 | Image DB | pas de rebuild, image Chainguard utilisée telle quelle dans la compose |
 | Port API | `5000`, bind `0.0.0.0` dans le conteneur |
-| UID API | `65532:65532` (`nonroot` distroless) |
+| UID API | `65532` (`nonroot`, défaut de l'image Chainguard python) |
 | UID DB | `70` (`postgres`), l'entrypoint démarre root puis bascule via `setpriv` |
-| Venv | `/opt/venv` |
-| Python runtime | `/usr/bin/python3` → 3.11.2 (distroless) |
-| Commande API | `ENTRYPOINT ["/opt/venv/bin/python3", "app.py"]`, `WORKDIR /app` |
+| Venv | `/app/venv` |
+| Python runtime | `/usr/bin/python3` → 3.14.8 |
+| Commande API | `ENTRYPOINT ["/app/venv/bin/python", "app.py"]`, `WORKDIR /app` |
 | Healthcheck API (B) | `["CMD", "/usr/bin/python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3).status == 200 else 1)"]` |
 | Healthcheck DB (B) | `["CMD", "pg_isready", "-U", "testuser", "-d", "testdb"]` |
 
@@ -32,19 +32,33 @@ Digests (index multi-arch, à recopier tels quels) :
 
 ```
 # A : builder
-debian:12-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
+cgr.dev/chainguard/python:latest-dev@sha256:894aed3297d91283e1fc4c542f5374a4b5f3726134fda7c94eaa539342be1e05
 # A : runtime
-gcr.io/distroless/python3-debian12:nonroot@sha256:7d1042ce588ab97019fe95c24ffca7bc5a82ccdac572511d5e09bda4435c89c5
+cgr.dev/chainguard/python:latest@sha256:b6248c85ba9b97e1e61b30197f309cc4d21661f889fefa5268f0a7bc530dad46
 # B : base de données
 cgr.dev/chainguard/postgres:latest@sha256:0c4eaf6cb9bd65337d834f5ebfe79add4312ee2125ab584bf1fbc071abc6bb8f
 ```
 
+Comparatif qui a motivé le choix (Trivy, HIGH+CRITICAL corrigeables = ce qui fait échouer `--ignore-unfixed --exit-code 1`) :
+
+| Image runtime | Taille | Python | CVE totales | HIGH+CRIT corrigeables |
+|---|---|---|---|---|
+| `gcr.io/distroless/python3-debian12:nonroot` | 65 Mo | 3.11.2 | 283 | **25** → CI rouge |
+| `gcr.io/distroless/python3-debian13:nonroot` | 72 Mo | 3.13.5 | 159 | 0 |
+| `cgr.dev/chainguard/python:latest` | 68 Mo | 3.14.8 | **0** | **0** |
+
+Image de test construite (Flask 3.1.3, Werkzeug 3.1.9, psycopg2-binary 2.9.13) :
+91 Mo, UID 65532, pas de shell, Trivy 0 CVE, Dive 99,8 %, Hadolint vierge.
+
 Points vérifiés et décisions :
-- **Builder = `debian:12-slim` + `apt python3-venv`, pas `python:3.11-slim`.**
-  `python:3.11-slim` installe Python dans `/usr/local/bin` (3.11.17).
-  Distroless l'a dans `/usr/bin` (3.11.2).
-  Le venv contient des symlinks vers l'interpréteur : ils casseraient au runtime.
-  Testé : venv `/opt/venv` construit sur debian:12-slim, copié dans distroless, Flask s'importe.
+- **Builder et runtime Chainguard de la même famille** : Python dans `/usr/bin` des deux côtés,
+  donc les symlinks du venv restent valides une fois copiés.
+  Recopier les deux digests **en même temps** pour garder la même version de Python.
+- **Le builder `-dev` tourne en non-root** : pas d'écriture dans `/opt`. D'où `/app/venv`.
+- **Supprimer pip du venv** en fin de build : `/app/venv/bin/pip uninstall -y pip`.
+  Sinon Trivy remonte 4 HIGH dans les libs vendorisées de pip (msgpack, setuptools).
+- **Python 3.14** : A doit vérifier que les tests passent avec cette version.
+- **Hadolint** : `:latest@sha256:...` ne déclenche pas DL3007 grâce au digest.
 - **Healthcheck API indépendant du venv** : il n'utilise que `urllib` (stdlib).
   `/usr/bin/python3` suffit. A peut changer le venv sans casser B.
 - **Chainguard Postgres** : `pg_isready` présent, PostgreSQL **18.6**, `PGDATA=/var/lib/postgresql/data`.
@@ -60,9 +74,9 @@ Points vérifiés et décisions :
 1. **Flake8** : lancer `flake8` avec le `.flake8` fourni, corriger `app.py`/`test_app.py` (noter chaque violation corrigée pour le README).
 2. **requirements.txt** : `pip-audit`/`trivy fs` sur l'original → lister CVE (Werkzeug, Flask…), monter Flask 3.x, Werkzeug 3.x récent, pytest 8.x, épingler `psycopg2-binary`. Vérifier que les tests passent.
 3. **Dockerfile multi-stage** :
-   - stage `builder` : image Python (même version mineure que le runtime, épinglée par digest), `python -m venv`, `pip install --no-cache-dir -r requirements.txt` (manifeste copié seul avant le code → cache)
-   - stage final : `gcr.io/distroless/python3-debian12:nonroot@sha256:...` (ou `cgr.dev/chainguard/python@sha256:...`), `COPY --from=builder` venv + `app.py` uniquement, `USER 65532` (ou `nonroot`), `ENTRYPOINT`/`CMD` en JSON, `PYTHONPATH` vers site-packages du venv
-   - attention : versions Python builder/runtime identiques (distroless debian12 = 3.11)
+   - stage `builder` : `cgr.dev/chainguard/python:latest-dev@sha256:...`, venv `/app/venv`, `requirements.txt` copié seul avant le code (cache), `pip install --no-cache-dir`, puis `pip uninstall -y pip`
+   - stage final : `cgr.dev/chainguard/python:latest@sha256:...`, `COPY --from=builder` venv + `app.py` uniquement, `USER 65532`, `ENTRYPOINT ["/app/venv/bin/python", "app.py"]`
+   - attention : digests builder/runtime pris en même temps (même Python 3.14.8)
 4. **.dockerignore** : `.git`, `.github`, `__pycache__`, `*.pyc`, `.pytest_cache`, `test_*.py`, `tests/`, `.env*`, `venv/.venv`, `*.log`, `*.tar*`, `*.zip`, `README.md`, `docker-compose*.yml`, `.hadolint.yaml`, `.flake8`, `Dockerfile`.
 5. **.hadolint.yaml** : `failure-threshold: warning`, `trustedRegistries: [docker.io, gcr.io, cgr.dev, ghcr.io]`, `override.error: [DL3002, DL3006, DL3007, DL4006]` (+ vérifier DL3025, DL3042, DL3020, DL3022, SC2086, DL3003 non ignorés).
 6. **Mesures locales** : `hadolint`, `dive --ci --lowestEfficiency=0.8`, `trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1`, taille, `docker run --entrypoint sh` qui doit échouer. Mesures « avant » sur l'image d'origine aussi (pour le tableau).
