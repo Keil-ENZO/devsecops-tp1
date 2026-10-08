@@ -10,15 +10,8 @@ on:
 # Aucun droit par défaut : chaque job déclare uniquement ce dont il a besoin.
 permissions: {}
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
-
 env:
   IMAGE_NAME: ghcr.io/keil-enzo/devsecops-tp1-api
-  DB_IMAGE_NAME: ghcr.io/keil-enzo/devsecops-tp1-db
-  # Même digest que docker-compose.yml : l'image scannée est celle publiée.
-  DB_IMAGE_SRC: cgr.dev/chainguard/postgres:latest@sha256:0c4eaf6cb9bd65337d834f5ebfe79add4312ee2125ab584bf1fbc071abc6bb8f
   CI_TAG: ci-${{ github.sha }}
   PYTHON_VERSION: "3.14"
 
@@ -36,7 +29,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install flake8==7.4.1
-      - run: flake8 .
+      - run: flake8 --config .flake8 .
 
   lint-docker:
     name: Lint Dockerfile (Hadolint)
@@ -75,8 +68,6 @@ jobs:
           tags: ${{ env.IMAGE_NAME }}:${{ env.CI_TAG }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=docker,dest=${{ runner.temp }}/image.tar
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
       - name: Dive --ci (efficience >= 80 %)
         run: |
           docker run --rm -e CI=true \
@@ -113,14 +104,6 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
-      - name: Trivy image DB
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ${{ env.DB_IMAGE_SRC }}
-          scanners: vuln
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
       - name: Trivy dépendances (requirements.txt)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -149,7 +132,6 @@ jobs:
           name: image
           path: ${{ runner.temp }}
       - run: docker load -i "${{ runner.temp }}/image.tar"
-      - run: cp .env.example .env
       - name: Démarrage de la stack (attente des healthchecks)
         run: docker compose up -d --no-build --wait --wait-timeout 120
       - run: docker compose ps
@@ -160,10 +142,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - name: Installation des dépendances de test
-        run: |
-          pip install -r requirements.txt
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+      - run: pip install -r requirements.txt
       - name: Pytest
         env:
           DB_HOST: 127.0.0.1
@@ -178,7 +157,7 @@ jobs:
   release:
     name: Publication GHCR
     needs: [trivy, integration]
-    if: github.event_name == 'push'
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -192,46 +171,24 @@ jobs:
       - id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: |
-            ${{ env.IMAGE_NAME }}
-            ${{ env.DB_IMAGE_NAME }}
+          images: ${{ env.IMAGE_NAME }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
-            type=sha,format=long
-            type=edge,branch=main
           flavor: |
-            latest=auto
+            latest=false
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      # API : on publie exactement l'archive scannée et testée, sans rebuild.
-      - name: Push image API
+      # On publie exactement l'archive scannée et testée, sans rebuild.
+      - name: Tag et push
         env:
           TAGS: ${{ steps.meta.outputs.tags }}
         run: |
           for tag in $TAGS; do
-            case "$tag" in "$IMAGE_NAME":*)
-              docker tag "$IMAGE_NAME:$CI_TAG" "$tag"
-              docker push "$tag"
-            esac
+            docker tag "$IMAGE_NAME:$CI_TAG" "$tag"
+            docker push "$tag"
           done
-      # DB : copie registre à registre du digest Chainguard scanné (toutes architectures).
-      # L'annotation source relie le package GHCR au dépôt.
-      - name: Push image DB
-        env:
-          TAGS: ${{ steps.meta.outputs.tags }}
-          SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
-        run: |
-          args=()
-          for tag in $TAGS; do
-            case "$tag" in "$DB_IMAGE_NAME":*) args+=(-t "$tag") ;; esac
-          done
-          docker buildx imagetools create "${args[@]}" \
-            --annotation "index:org.opencontainers.image.source=$SOURCE_URL" \
-            --annotation "index:org.opencontainers.image.description=Chainguard PostgreSQL durci, epingle par digest" \
-            "$DB_IMAGE_SRC"
