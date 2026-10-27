@@ -473,13 +473,33 @@ $ echo $?
 
 ```yaml
 failure-threshold: warning
-trustedRegistries: [docker.io, gcr.io, cgr.dev, ghcr.io]
+trustedRegistries:
+  - docker.io
+  - gcr.io
+  - cgr.dev
+  - ghcr.io
+disable-ignore-pragma: true
 override:
   error:
-    - DL3002 # le dernier USER ne doit pas être root
+    # Sécurité
+    - DL3002 # dernier USER non-root
     - DL3006 # tag explicite obligatoire sur FROM
-    - DL3007 # tag :latest interdit sauf épinglage par digest
+    - DL3007 # :latest interdit sans digest immuable
     - DL4006 # set -o pipefail obligatoire avant un pipe
+    # Règles standards sans dérogation
+    - DL3025 # forme JSON exec obligatoire pour CMD / ENTRYPOINT
+    - DL3042 # éviter le cache pip (--no-cache-dir)
+    - DL3008 # versions épinglées apt-get
+    - DL3009 # nettoyage cache listes apt
+    - DL3015 # éviter les paquets recommandés
+    - DL3019 # apk --no-cache
+    - DL3020 # COPY au lieu de ADD
+    - DL3021 # formatage slash pour COPY multi-sources
+    - DL3022 # référence d'étape FROM valide pour COPY --from
+    - DL3023 # pas d'auto-référence d'étape
+    - DL3003 # WORKDIR au lieu de cd
+    - SC2086 # protection des variables shell (double-quoting)
+    - SC2154 # variable non assignée
 ```
 
 ### Dive ≥ 80 %
@@ -620,3 +640,107 @@ $ curl -s http://localhost:5000/health
 $ curl -s http://localhost:5000/dbtest
 {"db_connection":"successful"}
 ```
+
+---
+
+# TP 2 : Industrialisation de la chaîne
+
+## Étape 1 : Build, secrets et multi-architecture
+
+### A. Cache pip persistant hors couches
+
+Le Dockerfile active la syntaxe BuildKit étendue :
+
+```dockerfile
+# syntax=docker/dockerfile:1.27@sha256:4edf897a…
+```
+
+L'installation monte un cache dédié géré par BuildKit :
+
+```dockerfile
+RUN --mount=type=cache,id=pip,target=/home/nonroot/.cache/pip,uid=65532,gid=65532,sharing=locked \
+    ...
+    && /app/venv/bin/pip install -r requirements.txt
+```
+
+`--no-cache-dir` disparaît. Le cache vit hors de l'image.
+Hadolint accepte ce motif : DL3042 reste vert.
+
+Preuve : ajout de `six==1.17.0` puis rebuild.
+
+```
+Collecting Flask==3.1.3          Using cached flask-3.1.3-py3-none-any.whl
+Collecting psycopg2-binary       Using cached psycopg2_binary-2.9.13-…whl
+Collecting six==1.17.0           Downloading six-1.17.0-py2.py3-none-any.whl
+```
+
+Seule la nouvelle dépendance est téléchargée.
+L'export du conteneur ne contient aucun dossier `.cache` ni `pip`.
+
+### B. Secret de build en tmpfs
+
+Le jeton est monté uniquement pendant le `RUN` :
+
+```dockerfile
+--mount=type=secret,id=pip_token,required=true,uid=65532,mode=0400 \
+test -s /run/secrets/pip_token \
+```
+
+Aucun `ARG`, aucun `ENV`.
+Le build échoue si le fichier manque ou est vide.
+Le fichier local `secrets/pip_token` est exclu par `.gitignore` et `.dockerignore`.
+
+Génération locale :
+
+```bash
+mkdir -p secrets && openssl rand -hex 32 > secrets/pip_token && chmod 600 secrets/pip_token
+```
+
+En CI, le jeton vient du secret GitHub `PIP_TOKEN`.
+
+Vérifications :
+
+| Contrôle | Résultat |
+|---|---|
+| `docker history --no-trunc` grep du jeton | 0 occurrence |
+| `docker image inspect` grep du jeton | 0 occurrence |
+| `trivy image --scanners secret` | Clean |
+| Fichier absent | `failed to stat` |
+| Fichier vide | `exit code: 1` |
+
+### C. Bake HCL multi-plateforme
+
+Tout est décrit dans `docker-bake.hcl`.
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `REGISTRY` | `ghcr.io/keil-enzo` | Registre cible |
+| `IMAGE` | `devsecops-tp1-api` | Nom du dépôt |
+| `VERSION` | `local` | `1.2.3` produit `1.2.3`, `1.2`, `1` |
+| `REVISION` | vide | SHA Git en label OCI |
+| `PIP_TOKEN_FILE` | `secrets/pip_token` | Source du secret |
+
+| Cible | Plateformes | Sortie | Cache |
+|---|---|---|---|
+| `local` | hôte | `docker` | import |
+| `ci` | `linux/amd64` | archive pour Dive, Trivy, Compose | import + export `buildcache-ci` |
+| `release` | `linux/amd64`, `linux/arm64` | push GHCR | import + export `buildcache` |
+
+Le cache registre est exporté en `mode=max`.
+Les étages intermédiaires sont donc réutilisables sur runner éphémère.
+
+```bash
+docker buildx bake -f docker-bake.hcl            # image locale
+VERSION=1.1.0 docker buildx bake -f docker-bake.hcl release
+docker buildx imagetools inspect ghcr.io/keil-enzo/devsecops-tp1-api:1.1.0
+```
+
+Index OCI obtenu :
+
+```
+MediaType: application/vnd.oci.image.index.v1+json
+  Platform:  linux/amd64
+  Platform:  linux/arm64
+```
+
+Le job `release` lance QEMU, puis `bake release` sur tag `v*.*.*`.

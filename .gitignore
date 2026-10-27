@@ -14,3 +14,7 @@ venv/
 *.log
 *.tar
 .DS_Store
+
+Enzo-Ibrahim.txt
+# Secrets de build locaux (jeton pip simulé)
+secrets/

@@ -1,15 +1,51 @@
-# Gouvernance de conteneurisation de l'équipe
+# Gouvernance Statique Hadolint
+# Configuration rigoureuse de l'audit de construction du Dockerfile
+
+# 1. Seuil d'échec global fixé à warning
 failure-threshold: warning
 
+# 2. Liste blanche stricte de registres approuvés
 trustedRegistries:
   - docker.io
   - gcr.io
   - cgr.dev
   - ghcr.io
 
+# 3. Interdiction formelle des dérogations inline (# hadolint ignore=...)
+disable-ignore-pragma: true
+
+# 4. Rehaussement et déclaration stricte des règles de sécurité et standards
 override:
   error:
-    - DL3002 # le dernier USER ne doit pas être root
-    - DL3006 # tag explicite obligatoire sur FROM
-    - DL3007 # tag :latest interdit (sauf épinglage par digest)
-    - DL4006 # set -o pipefail obligatoire avant un pipe
+    # --- Règles de sécurité obligatoirement rehaussées en error ---
+    # Interdiction formelle du compte root en fin d'image
+    - DL3002
+    # Interdiction des tags mouvants (version sémantique stricte obligatoire)
+    - DL3006
+    # Interdiction des tags :latest sans digest immuable
+    - DL3007
+    # Déclaration obligatoire de l'option d'échec sur pipe (set -o pipefail) avant un pipe
+    - DL4006
+
+    # --- Règles standards requises sans dérogation ---
+    # Forme JSON exec obligatoire pour les instructions de démarrage applicatif (CMD / ENTRYPOINT)
+    - DL3025
+    # Éviter l'accumulation de cache lors de l'installation de modules applicatifs (pip)
+    - DL3042
+    # Éviter l'accumulation de cache / fixer les versions des paquets système (apt)
+    - DL3008
+    - DL3009
+    - DL3015
+    # Éviter l'accumulation de cache des paquets système (apk)
+    - DL3019
+    # Proscription d'instructions d'ajout ambiguës au profit de copies explicites (COPY au lieu de ADD)
+    - DL3020
+    # Explicitation des chemins d'origine et destinations sur les copies multi-étages
+    - DL3021
+    - DL3022
+    - DL3023
+    # Prévention des ruptures de répertoire d'exécution (utiliser WORKDIR au lieu de cd)
+    - DL3003
+    # Sécurisation des scripts shell : protection des variables (double quotes, pas de splitting/globbing)
+    - SC2086
+    - SC2154

@@ -45,3 +45,7 @@ Dockerfile
 .vscode
 .idea
 .DS_Store
+
+# Secrets de build et définition bake
+secrets
+docker-bake.hcl
