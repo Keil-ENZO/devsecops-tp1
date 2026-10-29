@@ -341,4 +341,8 @@ jobs:
       - name: Vérification de l'attestation CycloneDX
         env:
           IMAGE: ${{ needs.release.outputs.image }}
-        run: cosign verify-attestation --key cosign.pub --type cyclonedx "$IMAGE"
+        run: |
+          cosign verify-attestation \
+            --key cosign.pub \
+            --type cyclonedx \
+            "$IMAGE" > "${RUNNER_TEMP}/verified-attestation.json"
