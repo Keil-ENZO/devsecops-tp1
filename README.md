@@ -780,6 +780,20 @@ Après la publication, le job `release` :
 2. signe l'index multi-architecture avec Cosign 3.1.4 ;
 3. attache `sbom.cdx.json` comme attestation signée de type CycloneDX.
 
+### Gate d'admission indépendant
+
+Le job `admission` ne reçoit aucune clé privée et ne peut pas publier de
+package. Après la fin du job `release`, il récupère uniquement la référence
+immuable `IMAGE@sha256:...` et vérifie directement dans GHCR :
+
+- la forme et la cohérence du digest transmis entre les jobs ;
+- la signature de l'image avec `cosign.pub` ;
+- l'attestation CycloneDX rattachée au même digest.
+
+Ce job dispose seulement de `contents: read` et `packages: read`. Aucune étape
+n'utilise `continue-on-error` : une signature absente ou invalide, une
+attestation manquante ou un digest incohérent bloque la chaîne.
+
 Vérification publique, en remplaçant la valeur du digest par celle de la
 release :
 
