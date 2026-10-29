@@ -33,16 +33,16 @@ Client ──:5000──> [ api-python ]   Chainguard Python, UID 65532, sans sh
 |---|---|
 | API Flask | https://github.com/Keil-ENZO/devsecops-tp1/pkgs/container/devsecops-tp1-api |
 
-Tags publiés par la release `v1.0.0`, tous sur le même digest :
+Tags publiés par la release `v1.1.0`, tous sur le même digest immuable :
 
 | Tag | Digest |
 |---|---|
-| `1.0.0` | `sha256:a779745c8ea8ce40fecd6fc019a362bd4d141fadb7e679b429b53ef504a33418` |
-| `1.0` | idem |
+| `1.1.0` | `sha256:b6e86b2ba25e18d0d3f6055aa45e17fd8e12b5fbcdd4bb1d9576ac90de811035` |
+| `1.1` | idem |
 | `1` | idem |
 
-Image construite pour `linux/amd64`.
-Sur Mac Apple Silicon, Docker l'exécute via émulation.
+L'index OCI contient nativement `linux/amd64` et `linux/arm64`. Docker choisit
+automatiquement la bonne architecture, y compris sur Mac Apple Silicon.
 
 La base de données utilise l'image Chainguard publique, épinglée par digest.
 Elle n'est pas reconstruite, donc pas republiée.
@@ -50,8 +50,8 @@ Elle n'est pas reconstruite, donc pas republiée.
 Récupération par tag sémantique :
 
 ```bash
-docker pull ghcr.io/keil-enzo/devsecops-tp1-api:1.0.0
-docker pull ghcr.io/keil-enzo/devsecops-tp1-api:1.0
+docker pull ghcr.io/keil-enzo/devsecops-tp1-api:1.1.0
+docker pull ghcr.io/keil-enzo/devsecops-tp1-api:1.1
 docker pull ghcr.io/keil-enzo/devsecops-tp1-api:1
 ```
 
@@ -59,7 +59,7 @@ Test de l'image publiée avec la stack complète :
 
 ```bash
 git clone https://github.com/Keil-ENZO/devsecops-tp1.git && cd devsecops-tp1
-API_TAG=1.0.0 docker compose up -d --no-build --wait --wait-timeout 120
+API_TAG=1.1.0 docker compose up -d --no-build --wait --wait-timeout 120
 curl -s http://localhost:5000/health    # {"status":"ok"}
 curl -s http://localhost:5000/dbtest    # {"db_connection":"successful"}
 docker compose down -v
@@ -368,10 +368,10 @@ Fichier : `.github/workflows/ci.yaml`.
 Déclencheurs : `push` et `pull_request` sur `main`, et tags `v*.*.*`.
 
 ```
-lint-python ─┐
-(Flake8)     ├─> build ──┬─> trivy ────────┐
-lint-docker ─┘  + Dive   └─> integration ──┴─> release
-(Hadolint)                                     (tag v*.*.* uniquement)
+lint-python ─┐            ┌─> trivy ───────────────┐
+             ├─> build ───┼─> integration ─────────┤
+lint-docker ─┘   + Dive   └─> SBOM ──> Grype+VEX ─┴─> release ─> admission
+                                                   (tag v*.*.* uniquement)
 ```
 
 | Job | Barrière bloquante |
@@ -379,9 +379,12 @@ lint-docker ─┘  + Dive   └─> integration ──┴─> release
 | `lint-python` | `flake8 --config .flake8 .` |
 | `lint-docker` | Hadolint avec `.hadolint.yaml`, seuil `warning` |
 | `build` | Build BuildKit, puis Dive : efficience < 80 % ou gaspillage utilisateur > 20 % |
+| `sbom` | Syft génère et valide `sbom.cdx.json` et `sbom.spdx.json` depuis l'archive construite |
 | `trivy` | Image + `requirements.txt` : `HIGH,CRITICAL`, `ignore-unfixed`, `exit-code: 1` |
+| `grype` | Audit du SBOM CycloneDX avec seuil `HIGH` et politique OpenVEX |
 | `integration` | `compose up --wait`, `curl /health` et `/dbtest`, pytest, `down -v` systématique |
-| `release` | `needs: [trivy, integration]`, publication GHCR |
+| `release` | Publication GHCR multi-architecture, digest, signature et attestation CycloneDX |
+| `admission` | Vérification indépendante de la signature et de l'attestation par digest |
 
 ### Permissions minimales
 
@@ -391,11 +394,14 @@ permissions: {}            # niveau workflow : aucun droit
 
 | Job | Permissions |
 |---|---|
-| lint, build, trivy, integration | `contents: read` |
+| lint, sbom, trivy, grype, integration | `contents: read` |
+| build | `contents: read`, `packages: write` pour le cache BuildKit |
 | release | `contents: read`, `packages: write` |
+| admission | `contents: read`, `packages: read` |
 
 Le `GITHUB_TOKEN` n'a aucun droit par défaut.
-Seul `release` peut écrire sur GHCR.
+Seuls `build` (cache) et `release` (image, signature, attestation) peuvent écrire
+sur GHCR.
 Un job de lint ou de test compromis ne peut rien publier.
 `persist-credentials: false` évite de laisser le token dans `.git` après le checkout.
 L'authentification GHCR utilise le jeton natif `secrets.GITHUB_TOKEN`, sans secret personnel.
@@ -414,19 +420,21 @@ Un SHA de commit est immuable.
 | actions/upload-artifact | v7.0.2 | `cf430e030ddbb5b0abf93d22962f4752f3646cd9` |
 | actions/download-artifact | v8.0.2 | `9000827ccba6bdab643e8b6fd33ac0654aef8333` |
 | docker/setup-buildx-action | v4.4.1 | `f87e5991a6d7451dcb8d9637bfbc97413f497069` |
-| docker/metadata-action | v6.2.0 | `dc802804100637a589fabce1cb79ff13a1411302` |
-| docker/build-push-action | v7.4.0 | `c3c9e263c25d99ce0380d002d59b67737d91b0dc` |
+| docker/setup-qemu-action | v4.4.0 | `99012661954931238ded8c8b007157a8430204e1` |
 | docker/login-action | v4.6.0 | `dbcb813823bdd20940b903addbd779551569679f` |
 | hadolint/hadolint-action | v3.5.0 | `06be81baf89a55ffd0e24b8f04a4185738dd3387` |
 | aquasecurity/trivy-action | v0.36.0 | `ed142fd0673e97e23eac54620cfb913e5ce36c25` |
+| sigstore/cosign-installer | v4.1.2 | `6f9f17788090df1f26f669e9d70d6ae9567deba6` |
 
 L'image `wagoodman/dive:v0.13.1` est épinglée par digest `sha256:f1886e6c…`.
 
 ### Traçabilité de l'artefact
 
-L'image est construite une seule fois dans `build`, puis transmise en artefact.
-Trivy, les tests d'intégration et la release utilisent cette même archive.
-L'image publiée est donc exactement celle qui a été validée.
+L'image `linux/amd64` est construite dans `build`, puis transmise en archive à
+Dive, Trivy, Syft et aux tests d'intégration. La release reconstruit le même
+commit avec les mêmes entrées et réutilise ses couches pour publier l'index
+`linux/amd64`/`linux/arm64`. Les SBOM générés depuis l'image CI réellement
+construite sont ensuite attachés au digest immuable de cet index.
 Le label OCI `org.opencontainers.image.source` relie le package au dépôt.
 Les labels `revision` et `created` identifient le commit et la date de build.
 
@@ -437,6 +445,7 @@ Publication uniquement sur un tag Git `vMAJEUR.MINEUR.CORRECTIF`.
 | Tag Git | Tags publiés |
 |---|---|
 | `v1.0.0` | `1.0.0`, `1.0`, `1` |
+| `v1.1.0` | `1.1.0`, `1.1`, `1` |
 | `v1.2.3` | `1.2.3`, `1.2`, `1` |
 | `v0.4.1` | `0.4.1`, `0.4` |
 
@@ -578,6 +587,8 @@ test_app.py::test_dbtest PASSED                                          [100%]
 | Pull request #1 | [37779582120](https://github.com/Keil-ENZO/devsecops-tp1/actions/runs/37779582120) | ✅ success |
 | Push sur `main` | [37779993568](https://github.com/Keil-ENZO/devsecops-tp1/actions/runs/37779993568) | ✅ success, release ignorée car sans tag |
 | Tag `v1.0.0` | [37783928241](https://github.com/Keil-ENZO/devsecops-tp1/actions/runs/37783928241) | ✅ success |
+| Push TP2 sur `main` | [40891308104](https://github.com/Keil-ENZO/devsecops-tp1/actions/runs/40891308104) | ✅ success |
+| Tag `v1.1.0` | [40891903023](https://github.com/Keil-ENZO/devsecops-tp1/actions/runs/40891903023) | ✅ success, release multi-architecture signée et attestée |
 
 Détail du run `v1.0.0` :
 
@@ -831,11 +842,10 @@ Ce job dispose seulement de `contents: read` et `packages: read`. Aucune étape
 n'utilise `continue-on-error` : une signature absente ou invalide, une
 attestation manquante ou un digest incohérent bloque la chaîne.
 
-Vérification publique, en remplaçant la valeur du digest par celle de la
-release :
+Vérification publique de la release `v1.1.0` :
 
 ```bash
-IMAGE='ghcr.io/keil-enzo/devsecops-tp1-api@sha256:<digest>'
+IMAGE='ghcr.io/keil-enzo/devsecops-tp1-api@sha256:b6e86b2ba25e18d0d3f6055aa45e17fd8e12b5fbcdd4bb1d9576ac90de811035'
 
 cosign verify --key cosign.pub "$IMAGE"
 cosign verify-attestation --key cosign.pub --type cyclonedx "$IMAGE"
@@ -844,3 +854,15 @@ cosign download attestation "$IMAGE" \
   | base64 -d \
   | jq '.predicate'
 ```
+
+Résultat du run `v1.1.0` :
+
+```text
+Publication GHCR (multi-arch): success
+Signature de l'image par digest: success
+Attestation CycloneDX signée: success
+Gate d'admission (signature + attestation): success
+```
+
+Le gate valide les claims Cosign, leur présence dans le journal de transparence
+et leur signature avec `cosign.pub`.
