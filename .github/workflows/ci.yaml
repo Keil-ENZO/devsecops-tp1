@@ -171,6 +171,30 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
 
+  grype:
+    name: Vulnérabilités du SBOM (Grype + VEX)
+    needs: sbom
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sbom
+          path: ${{ runner.temp }}/sbom
+      - name: Grype sur CycloneDX avec politique OpenVEX
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/work:ro" \
+            -v "${{ runner.temp }}/sbom:/sbom:ro" \
+            -w /work \
+            anchore/grype:v0.121.0@sha256:621d56d1d68106b787022c81546f7e0a36202a25d1239f0c20195fab8c16f7ea \
+            sbom:/sbom/sbom.cdx.json \
+            --config .grype.yaml
+
   integration:
     name: Tests d'intégration (Compose)
     needs: build
@@ -213,7 +237,7 @@ jobs:
 
   release:
     name: Publication GHCR (multi-arch)
-    needs: [sbom, trivy, integration]
+    needs: [sbom, trivy, grype, integration]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     outputs:

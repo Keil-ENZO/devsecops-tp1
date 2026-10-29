@@ -745,7 +745,44 @@ MediaType: application/vnd.oci.image.index.v1+json
 
 Le job `release` lance QEMU, puis `bake release` sur tag `v*.*.*`.
 
-## Étape 2 : Publication, signature et attestation
+## Étape 2 : Traçabilité, VEX, signature et attestation
+
+### Audit Grype du SBOM et gouvernance OpenVEX
+
+Le job `grype` analyse directement l'artefact `sbom.cdx.json`, sans rescanner
+l'image. Grype 0.121.0 est épinglé par digest et applique `.grype.yaml` :
+
+- toute vulnérabilité `HIGH` ou `CRITICAL` non qualifiée fait échouer le job ;
+- les identifiants sont normalisés en CVE ;
+- `security.vex.json` est chargé comme document OpenVEX auditable ;
+- les alertes supprimées par VEX restent visibles dans le rapport.
+
+Commande locale équivalente :
+
+```bash
+docker run --rm \
+  -v "$PWD:/work:ro" \
+  -w /work \
+  anchore/grype:v0.121.0@sha256:621d56d1d68106b787022c81546f7e0a36202a25d1239f0c20195fab8c16f7ea \
+  sbom:sbom.cdx.json --config .grype.yaml
+```
+
+Le scan du 29 octobre 2026 ne trouve aucune vulnérabilité corrigeable. Il
+identifie un résidu `MEDIUM`, `CVE-2026-114583`, dans CPython 3.15.1. Cette
+faille nécessite l'extraction d'une archive forgée avec
+`tarfile.extractall(..., filter="tar")`. L'API n'importe pas `tarfile`,
+n'accepte aucun fichier et n'extrait aucune archive : le code vulnérable ne se
+trouve pas dans son chemin d'exécution. La déclaration `not_affected` utilise
+donc la justification normalisée `vulnerable_code_not_in_execute_path` et cible
+le PURL exact du paquet présent dans le SBOM. L'avis éditeur est disponible
+dans la [liste de sécurité Python](https://mail.python.org/archives/list/security-announce@python.org/thread/43JOWPRAV5DI3VZ4FUEUAZOHCATXXOCK/).
+
+Résultat contrôlé :
+
+```text
+python-3.15  3.15.1_git20261024-r1  CVE-2026-114583  Medium
+(suppressed by VEX)
+```
 
 ### Publication immuable multi-architecture
 

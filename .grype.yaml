@@ -1,0 +1,9 @@
+# Politique d'audit du SBOM. Toute vulnérabilité HIGH ou CRITICAL non
+# qualifiée par le document OpenVEX fait échouer le job Grype.
+fail-on-severity: high
+by-cve: true
+show-suppressed: true
+check-for-app-update: false
+vex-documents:
+  - security.vex.json
+
