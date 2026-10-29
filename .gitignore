@@ -18,3 +18,5 @@ venv/
 Enzo-Ibrahim.txt
 # Secrets de build locaux (jeton pip simulé)
 secrets/
+
+cosign.key

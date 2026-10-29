@@ -13,11 +13,11 @@ COPY requirements.txt .
 # retéléchargées, rien n'est embarqué dans l'image.
 # Jeton du dépôt privé monté en tmpfs le temps du RUN, jamais en ARG/ENV.
 RUN --mount=type=cache,id=pip,target=/home/nonroot/.cache/pip,uid=65532,gid=65532,sharing=locked \
-    --mount=type=secret,id=pip_token,required=true,uid=65532,mode=0400 \
-    test -s /run/secrets/pip_token \
-    && python -m venv /app/venv \
-    && /app/venv/bin/pip install -r requirements.txt \
-    && /app/venv/bin/pip uninstall -y pip
+  --mount=type=secret,id=pip_token,required=true,uid=65532,mode=0400 \
+  test -s /run/secrets/pip_token \
+  && python -m venv /app/venv \
+  && /app/venv/bin/pip install -r requirements.txt \
+  && /app/venv/bin/pip uninstall -y pip
 
 # ---- Étape 2 : exécution (sans shell, sans gestionnaire de paquets) ----
 FROM cgr.dev/chainguard/python:latest@sha256:b6248c85ba9b97e1e61b30197f309cc4d21661f889fefa5268f0a7bc530dad46
@@ -25,7 +25,7 @@ FROM cgr.dev/chainguard/python:latest@sha256:b6248c85ba9b97e1e61b30197f309cc4d21
 WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+  PYTHONUNBUFFERED=1
 
 COPY --from=builder /app/venv /app/venv
 COPY app.py .

@@ -1,0 +1,16 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://univ.fr/vex/test-1",
+  "author": "Etudiant DevSecOps",
+  "timestamp": "2026-10-15T08:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2025-12781"
+      },
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path"
+    }
+  ]
+}
