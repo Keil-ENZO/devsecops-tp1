@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.27@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 
 # ---- Étape 1 : préparation des dépendances (image -dev : pip disponible) ----
-FROM cgr.dev/chainguard/python:latest-dev@sha256:894aed3297d91283e1fc4c542f5374a4b5f3726134fda7c94eaa539342be1e05 AS builder
+FROM cgr.dev/chainguard/python:latest-dev@sha256:b12d43491dc1e7716c76a2eeba0b821ccf368ebecf55944cc64df34eeba4db48 AS builder
 
 WORKDIR /app
 
@@ -20,7 +20,7 @@ RUN --mount=type=cache,id=pip,target=/home/nonroot/.cache/pip,uid=65532,gid=6553
   && /app/venv/bin/pip uninstall -y pip
 
 # ---- Étape 2 : exécution (sans shell, sans gestionnaire de paquets) ----
-FROM cgr.dev/chainguard/python:latest@sha256:b6248c85ba9b97e1e61b30197f309cc4d21661f889fefa5268f0a7bc530dad46
+FROM cgr.dev/chainguard/python:latest@sha256:549f3ba5e588ebab80dcf5a5a3536aa7f4b5c384bc6955c0347d372414197386
 
 WORKDIR /app
 
