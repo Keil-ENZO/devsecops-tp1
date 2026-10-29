@@ -744,3 +744,52 @@ MediaType: application/vnd.oci.image.index.v1+json
 ```
 
 Le job `release` lance QEMU, puis `bake release` sur tag `v*.*.*`.
+
+## Étape 2 : Publication, signature et attestation
+
+### Publication immuable multi-architecture
+
+Une release n'est déclenchée que par un tag SemVer `vX.Y.Z`. La cible Bake
+`release` publie un index OCI pour `linux/amd64` et `linux/arm64`. Le workflow
+écrit les métadonnées Buildx dans un fichier JSON, valide la forme du digest
+`sha256` retourné, puis utilise exclusivement la référence immuable
+`IMAGE@sha256:...` pour toutes les opérations cryptographiques.
+
+### Secrets Cosign requis
+
+La signature utilise la paire de clés dédiée dont la partie publique est
+versionnée dans `cosign.pub`. La clé privée et son mot de passe ne doivent
+jamais être ajoutés au dépôt. Ils doivent être enregistrés dans GitHub :
+
+```bash
+gh secret set COSIGN_PRIVATE_KEY < cosign.key
+read -rs COSIGN_PASSWORD
+printf '%s' "$COSIGN_PASSWORD" | gh secret set COSIGN_PASSWORD
+unset COSIGN_PASSWORD
+```
+
+Si la clé privée correspondant au fichier `cosign.pub` est perdue, il faut
+générer une nouvelle paire avec `cosign generate-key-pair`, remplacer
+`cosign.pub`, puis enregistrer la nouvelle clé privée dans les secrets GitHub.
+
+### Signature et attestation CycloneDX
+
+Après la publication, le job `release` :
+
+1. récupère le digest de l'index depuis `buildx bake --metadata-file` ;
+2. signe l'index multi-architecture avec Cosign 3.1.4 ;
+3. attache `sbom.cdx.json` comme attestation signée de type CycloneDX.
+
+Vérification publique, en remplaçant la valeur du digest par celle de la
+release :
+
+```bash
+IMAGE='ghcr.io/keil-enzo/devsecops-tp1-api@sha256:<digest>'
+
+cosign verify --key cosign.pub "$IMAGE"
+cosign verify-attestation --key cosign.pub --type cyclonedx "$IMAGE"
+cosign download attestation "$IMAGE" \
+  | jq -r '.payload' \
+  | base64 -d \
+  | jq '.predicate'
+```
