@@ -99,6 +99,46 @@ jobs:
           path: ${{ runner.temp }}/image.tar
           retention-days: 1
 
+  sbom:
+    name: SBOM (CycloneDX + SPDX)
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image
+          path: ${{ runner.temp }}
+      - name: Generation statique des SBOM avec Syft
+        run: |
+          docker run --rm \
+            -v "${{ runner.temp }}/image.tar:/input/image.tar:ro" \
+            -v "$GITHUB_WORKSPACE:/output" \
+            anchore/syft:v1.55.0@sha256:4cc92b64ca74ffca4c94d4c8fcc01f217731375300be14d0b6eeb2e82eaa110a \
+            scan docker-archive:/input/image.tar \
+            --source-name "$IMAGE_NAME" \
+            --source-version "$CI_TAG" \
+            -o cyclonedx-json=/output/sbom.cdx.json \
+            -o spdx-json=/output/sbom.spdx.json
+      - name: Validation des SBOM
+        run: |
+          test -s sbom.cdx.json
+          test -s sbom.spdx.json
+          python -m json.tool sbom.cdx.json >/dev/null
+          python -m json.tool sbom.spdx.json >/dev/null
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom
+          path: |
+            sbom.cdx.json
+            sbom.spdx.json
+          if-no-files-found: error
+          retention-days: 30
+
   trivy:
     name: Vulnérabilités (Trivy)
     needs: build
@@ -173,7 +213,7 @@ jobs:
 
   release:
     name: Publication GHCR (multi-arch)
-    needs: [trivy, integration]
+    needs: [sbom, trivy, integration]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     permissions:
